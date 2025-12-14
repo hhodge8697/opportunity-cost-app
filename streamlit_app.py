@@ -1,145 +1,88 @@
 import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
-from engine import Profile, Scenario, Debt, simulate
+from engine import fv_monthly, monthly_rate, months_to_payoff, total_interest_paid
 
-def money(x):
-    try:
-        return f"${float(x):,.2f}"
-    except Exception:
-        return x
-        
-st.set_page_config(page_title="Opportunity Cost Optimizer", layout="wide")
-st.title("🧮 Opportunity Cost Optimizer")
+st.set_page_config(page_title="Opportunity Cost Calculator", layout="centered")
+st.title("💰 Opportunity Cost Calculator")
+st.markdown("See how small changes in spending can lead to **big future gains**.")
 
-tab1, tab2, tab3 = st.tabs(["Profile & Expenses", "Debts & Scenarios", "Results"])
+tab1, tab2 = st.tabs(["📊 Inputs", "📈 Results"])
 
 with tab1:
+    st.header("Your Basics")
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Personal")
-        current_age_years = st.number_input("Current Age (Years)", 18, 100, 40)
-        life_expectancy = st.number_input("Life Expectancy", 70, 120, 90)
-        retirement_age = st.number_input("Retirement Age", 60, 80, 67)
-        birth_year = st.number_input("Birth Year", 1920, 2010, 1985)
-        ss_pia = st.number_input("SS Monthly Benefit at Full Retirement Age", 0.0, 5000.0, 2800.0)
-
+        monthly_income = st.number_input("Monthly Take-Home Income", value=6000)
+        total_expenses = st.number_input("Essential Monthly Expenses", value=4000)
     with col2:
-        st.subheader("Income")
-        monthly_income = st.number_input("Monthly Take-Home Income", 0.0, 50000.0, 8500.0)
-        post_retire_income = st.number_input("Monthly Income After Retirement", 0.0, 20000.0, 3000.0)
-        income_growth = st.number_input("Annual Income Growth (%)", 0.0, 20.0, 3.0) / 100
-        expense_inflation = st.number_input("Annual Expense Inflation (%)", 0.0, 10.0, 2.5) / 100
+        current_savings_inv = st.number_input("Current Savings/Investments", value=10000)
+        expected_return = st.number_input("Expected Annual Return (%)", value=7.0) / 100
 
-    st.subheader("Assets & Assumptions")
-    col1, col2 = st.columns(2)
-    with col1:
-        cash = st.number_input("Current Cash Savings", 0.0, 1000000.0, 6000.0)
-        investments = st.number_input("Current Investments", 0.0, 5000000.0, 25000.0)
-    with col2:
-        return_rate = st.number_input("Expected Annual Return (%)", 0.0, 20.0, 8.0) / 100
-        discount_rate = st.number_input("Discount Rate (%)", 0.0, 15.0, 4.0) / 100
-        ef_months = st.number_input("Emergency Fund Target (Months)", 1.0, 12.0, 4.0)
+    discretionary = monthly_income - total_expenses
+    if discretionary < 0:
+        st.error("Expenses exceed income—adjust for realistic results.")
+        discretionary = 0
+    st.success(f"**Monthly Discretionary (Surplus): ${discretionary:,.0f}**")
 
-    st.subheader("Monthly Expenses")
-    essential_cats = st.text_input("Essential Categories (comma-separated)", "rent,groceries,utilities,insurance,transport")
-    essential_list = [c.strip() for c in essential_cats.split(",")] if essential_cats else None
-
-    expenses = {}
-    for i in range(10):
-        col1, col2 = st.columns([3, 1])
+    st.header("Debt (Optional)")
+    has_debt = st.checkbox("I have high-interest debt")
+    if has_debt:
+        col1, col2, col3 = st.columns(3)
         with col1:
-            cat = st.text_input(f"Category {i+1}", f"{'rent' if i==0 else 'groceries' if i==1 else ''}")
+            debt_balance = st.number_input("Total Debt Balance", value=15000)
         with col2:
-            amt = st.number_input(f"Amount {i+1}", 0.0, 10000.0, step=50.0, key=f"amt{i}")
-        if cat and amt > 0:
-            expenses[cat] = amt
-        if not cat:
-            break
+            debt_apr = st.number_input("Average APR (%)", value=18.0) / 100
+        with col3:
+            min_payment = st.number_input("Current Min Payment", value=400)
+
+    st.header("Time Horizon")
+    years = st.slider("Years into the Future", 5, 30, 15)
 
 with tab2:
-    st.subheader("Debts")
-    debts = []
-    for i in range(5):
-        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-        with col1:
-            name = st.text_input(f"Debt Name {i+1}", f"Credit Card {i+1}" if i==0 else "")
-        with col2:
-            balance = st.number_input(f"Balance {i+1}", 0.0, 100000.0, key=f"bal{i}")
-        with col3:
-            apr = st.number_input(f"APR % {i+1}", 0.0, 50.0, key=f"apr{i}") / 100
-        with col4:
-            min_pay = st.number_input(f"Min Payment {i+1}", 0.0, 2000.0, key=f"min{i}")
-        if name and balance > 0:
-            debts.append(Debt(name, balance, apr, min_pay))
-        if not name:
-            break
+    if discretionary <= 0:
+        st.warning("No surplus—focus on increasing income or cutting essentials first!")
+    else:
+        months = years * 12
+        r_monthly = monthly_rate(expected_return)
 
-    st.subheader("Scenarios to Compare")
-    num_scenarios = st.slider("Number of Scenarios", 1, 5, 2)
-    scenarios = []
-    for i in range(num_scenarios):
-        with st.expander(f"Scenario {i+1}: {st.text_input(f'Name', f'Scenario {i+1}', key=f'name{i}')}", expanded=i<2):
-            col1, col2 = st.columns(2)
-            with col1:
-                tithe = st.checkbox("Tithing Enabled", key=f"tithe{i}")
-                if tithe:
-                    rate = st.slider("Tithe Rate (%)", 0.0, 20.0, 10.0, key=f"rate{i}") / 100
-                    start_rule = st.selectbox("Start Tithing", ["now", "after debt-free", "after emergency fund"], key=f"start{i}")
-            with col2:
-                claim_age = st.slider("SS Claim Age", 62, 70, 67, key=f"claim{i}")
-            invest_rule = st.selectbox("Invest Surplus After", ["debt-free", "always"], key=f"invest{i}")
-            scenarios.append(Scenario(
-                name=st.session_state[f'name{i}'],
-                tithe_enabled=tithe if tithe else False,
-                tithe_rate=rate if tithe else 0.1,
-                tithe_start_rule=start_rule if tithe else "now",
-                ss_claim_age_years=claim_age,
-                invest_after=invest_rule
-            ))
+        # Scenario 1: Current (spend discretionary)
+        fv_current = current_savings_inv * (1 + r_monthly)**months + fv_monthly(0, r_monthly, months)
 
-with tab3:
-    if st.button("🚀 Run Simulation", type="primary"):
-        profile = Profile(
-            current_age_years=current_age_years,
-            life_expectancy_age_years=life_expectancy,
-            retirement_age_years=retirement_age,
-            monthly_income_after_tax=monthly_income,
-            post_retirement_monthly_income=post_retire_income,
-            annual_income_growth=income_growth,
-            annual_expense_inflation=expense_inflation,
-            cash_savings=cash,
-            investment_balance=investments,
-            debts=debts,
-            invest_annual_return=return_rate,
-            discount_rate=discount_rate,
-            emergency_fund_target_months=ef_months,
-            essential_expense_categories=essential_list,
-            birth_year=birth_year,
-            ss_pia_at_fra_monthly=ss_pia,
-            base_expenses=expenses
-        )
+        # Scenario 2: Optimized (redirect discretionary to debt then invest)
+        if has_debt and 'debt_balance' in locals():
+            extra = discretionary
+            interest_saved = total_interest_paid(debt_balance, debt_apr, min_payment, 0) - total_interest_paid(debt_balance, debt_apr, min_payment, extra)
+            payoff_months_opt = months_to_payoff(debt_balance, debt_apr, min_payment, extra)
+            payoff_months_cur = months_to_payoff(debt_balance, debt_apr, min_payment, 0)
 
-        results = {}
-        for s in scenarios:
-            results[s.name] = simulate(profile, s)
+            if payoff_months_opt < months:
+                remaining_months = months - payoff_months_opt
+                fv_opt = fv_monthly(discretionary, r_monthly, remaining_months) + current_savings_inv * (1 + r_monthly)**months
+            else:
+                fv_opt = current_savings_inv * (1 + r_monthly)**months
+            opportunity = fv_opt - fv_current + interest_saved
+            st.metric("Interest Saved by Paying Debt Faster", f"${interest_saved:,.0f}")
+        else:
+            fv_opt = current_savings_inv * (1 + r_monthly)**months + fv_monthly(discretionary, r_monthly, months)
+            opportunity = fv_opt - fv_current
 
-        df = pd.DataFrame(results).T
-        st.dataframe(df.style.format({"final_net_worth": money, "ss_monthly_at_claim": money, "total_interest_paid": money}))
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Current Path Future Value", f"${fv_current:,.0f}")
+        col2.metric("Optimized Path Future Value", f"${fv_opt:,.0f}")
+        col3.metric("**Opportunity Gain**", f"**${opportunity:,.0f}**", delta=f"+${opportunity:,.0f}")
 
-        if len(scenarios) > 1:
-            st.subheader("Opportunity Cost (Differences)")
-            base = scenarios[0].name
-            deltas = df.sub(df.loc[base], axis=1).drop(index=base)
-            st.dataframe(deltas.style.format(money))
-
-        fig, ax = plt.subplots()
-        df["final_net_worth"].plot(kind="bar", ax=ax)
-        ax.set_ylabel("Final Net Worth")
-        ax.tick_params(axis='x', rotation=30)
+        # Chart
+        data = pd.DataFrame({
+            "Scenario": ["Current Spending", "Optimized (Invest Surplus)"],
+            "Future Wealth": [fv_current, fv_opt]
+        })
+        fig, ax = plt.subplots(figsize=(8, 5))
+        bars = ax.bar(data["Scenario"], data["Future Wealth"], color=["#ff9999", "#66b3ff"])
+        ax.set_ylabel("Future Value ($)")
+        ax.bar_label(bars, fmt="$%,.0f")
         st.pyplot(fig)
 
-        csv = df.to_csv()
-        st.download_button("Download Results CSV", csv, "results.csv", "text/csv")
+        st.info("**Key Insight**: By redirecting your discretionary spending to debt/investments, you could gain the amount shown above over the selected years.")
 
-st.caption("Not financial advice • For educational purposes only • Built with ❤️ using Grok + Streamlit")
+st.caption("Not financial advice • Simple math tool for illustration • Assumptions: constant returns, no taxes/inflation adjustments")
