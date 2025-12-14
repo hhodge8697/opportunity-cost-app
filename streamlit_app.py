@@ -3,6 +3,12 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from engine import Profile, Scenario, Debt, simulate
 
+def money(x):
+    try:
+        return f"${float(x):,.2f}"
+    except Exception:
+        return x
+        
 st.set_page_config(page_title="Opportunity Cost Optimizer", layout="wide")
 st.title("🧮 Opportunity Cost Optimizer")
 
